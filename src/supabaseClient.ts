@@ -1,0 +1,1 @@
+// Supabase client removed. Using local API for development.
