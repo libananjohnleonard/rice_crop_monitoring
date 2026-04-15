@@ -92,9 +92,8 @@ function getHarvestStatus(yellowPercentage, greenPercentage, healthScore) {
 function buildInterpretation(category, excludedCount = 0) {
   const suffix =
     excludedCount > 0
-      ? ` Re-analysis applied with ${excludedCount} excluded section${
-          excludedCount === 1 ? '' : 's'
-        }.`
+      ? ` Re-analysis applied with ${excludedCount} excluded section${excludedCount === 1 ? '' : 's'
+      }.`
       : '';
 
   if (category === 'whole_field') {
@@ -241,9 +240,8 @@ function summarizeWholeFieldImageResults(imageResults) {
     poorSections,
     selectedSectionId: imageResults[0]?.selectedSectionId ?? null,
     gridEstimate: imageResults[0]?.gridEstimate ?? null,
-    interpretation: `${imageResults.length} whole-field image${
-      imageResults.length === 1 ? '' : 's'
-    } analyzed individually. Use preview navigation to inspect each result.`,
+    interpretation: `${imageResults.length} whole-field image${imageResults.length === 1 ? '' : 's'
+      } analyzed individually. Use preview navigation to inspect each result.`,
     gridRows: imageResults[0]?.gridRows ?? null,
     gridCols: imageResults[0]?.gridCols ?? null,
     sections: imageResults[0]?.sections ?? [],
