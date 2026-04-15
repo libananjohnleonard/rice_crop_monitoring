@@ -2,27 +2,12 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
-import { createClient } from '@supabase/supabase-js';
 
 const { Pool } = pg;
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-
-const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
-const SYNC_INTERVAL_MS = Number(process.env.SUPABASE_SYNC_INTERVAL_MS ?? 30000);
-
-const supabaseAdmin =
-  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      })
-    : null;
-
-let isSyncInProgress = false;
 
 const app = express();
 app.use(cors());
@@ -66,42 +51,6 @@ async function ensureImageOrderColumn() {
   `);
 }
 
-async function ensureSupabaseSyncQueueTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS supabase_sync_queue (
-      id bigserial PRIMARY KEY,
-      batch_id uuid NOT NULL UNIQUE REFERENCES analysis_batches(id) ON DELETE CASCADE,
-      status text NOT NULL DEFAULT 'pending',
-      retry_count integer NOT NULL DEFAULT 0,
-      last_error text,
-      last_attempt_at timestamptz,
-      synced_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now(),
-      CHECK (status IN ('pending', 'processing', 'synced', 'failed'))
-    )
-  `);
-}
-
-async function queueBatchForSupabaseSync(batchId, client = pool) {
-  await client.query(
-    `
-    INSERT INTO supabase_sync_queue (batch_id, status, last_error, synced_at, updated_at)
-    VALUES ($1, 'pending', NULL, NULL, now())
-    ON CONFLICT (batch_id)
-    DO UPDATE
-      SET status = 'pending',
-          last_error = NULL,
-          synced_at = NULL,
-          updated_at = now()
-    `,
-    [batchId]
-  );
-}
-
-function isSupabaseSyncConfigured() {
-  return Boolean(supabaseAdmin);
-}
 
 function round1(value) {
   return Math.round(value * 10) / 10;
@@ -302,186 +251,6 @@ function summarizeWholeFieldImageResults(imageResults) {
   };
 }
 
-async function getBatchSyncPayload(batchId) {
-  const batchRes = await pool.query(
-    `
-    SELECT *
-    FROM analysis_batches
-    WHERE id = $1
-    LIMIT 1
-    `,
-    [batchId]
-  );
-  const batch = batchRes.rows[0];
-
-  if (!batch) return null;
-
-  const analysisResultRes = await pool.query(
-    `
-    SELECT *
-    FROM analysis_results
-    WHERE batch_id = $1
-    ORDER BY analyzed_at DESC
-    LIMIT 1
-    `,
-    [batchId]
-  );
-  const analysisResult = analysisResultRes.rows[0] ?? null;
-
-  const imagesRes = await pool.query(
-    `
-    SELECT *
-    FROM plant_images
-    WHERE batch_id = $1
-    ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
-    `,
-    [batchId]
-  );
-
-  const sectionsRes = analysisResult
-    ? await pool.query(
-        `
-        SELECT *
-        FROM analysis_sections
-        WHERE analysis_result_id = $1
-        ORDER BY level ASC, row_index ASC, col_index ASC
-        `,
-        [analysisResult.id]
-      )
-    : { rows: [] };
-
-  return {
-    batch,
-    analysisResult,
-    images: imagesRes.rows,
-    sections: sectionsRes.rows,
-  };
-}
-
-async function syncBatchToSupabase(batchId) {
-  if (!supabaseAdmin) {
-    return { synced: false, reason: 'Supabase is not configured.' };
-  }
-
-  const payload = await getBatchSyncPayload(batchId);
-
-  if (!payload || !payload.batch) {
-    return { synced: true, reason: 'Batch no longer exists locally.' };
-  }
-
-  const { batch, analysisResult, images, sections } = payload;
-
-  const batchUpsert = await supabaseAdmin
-    .from('analysis_batches')
-    .upsert([batch], { onConflict: 'id' });
-  if (batchUpsert.error) {
-    throw new Error(`Failed to sync analysis batch: ${batchUpsert.error.message}`);
-  }
-
-  if (images.length > 0) {
-    const imagesUpsert = await supabaseAdmin
-      .from('plant_images')
-      .upsert(images, { onConflict: 'id' });
-    if (imagesUpsert.error) {
-      throw new Error(`Failed to sync plant images: ${imagesUpsert.error.message}`);
-    }
-  }
-
-  if (analysisResult) {
-    const analysisUpsert = await supabaseAdmin
-      .from('analysis_results')
-      .upsert([analysisResult], { onConflict: 'id' });
-    if (analysisUpsert.error) {
-      throw new Error(`Failed to sync analysis result: ${analysisUpsert.error.message}`);
-    }
-
-    const deleteSectionsResult = await supabaseAdmin
-      .from('analysis_sections')
-      .delete()
-      .eq('analysis_result_id', analysisResult.id);
-    if (deleteSectionsResult.error) {
-      throw new Error(
-        `Failed to clear remote sections: ${deleteSectionsResult.error.message}`
-      );
-    }
-
-    if (sections.length > 0) {
-      const sectionsInsert = await supabaseAdmin
-        .from('analysis_sections')
-        .insert(sections);
-      if (sectionsInsert.error) {
-        throw new Error(`Failed to sync analysis sections: ${sectionsInsert.error.message}`);
-      }
-    }
-  }
-
-  return { synced: true };
-}
-
-async function runSupabaseSyncCycle() {
-  if (isSyncInProgress || !isSupabaseSyncConfigured()) {
-    return;
-  }
-
-  isSyncInProgress = true;
-
-  try {
-    const queueRes = await pool.query(
-      `
-      SELECT batch_id
-      FROM supabase_sync_queue
-      WHERE status IN ('pending', 'failed')
-      ORDER BY created_at ASC
-      LIMIT 20
-      `
-    );
-
-    for (const row of queueRes.rows) {
-      const { batch_id: batchId } = row;
-
-      await pool.query(
-        `
-        UPDATE supabase_sync_queue
-        SET status = 'processing',
-            last_attempt_at = now(),
-            updated_at = now()
-        WHERE batch_id = $1
-        `,
-        [batchId]
-      );
-
-      try {
-        await syncBatchToSupabase(batchId);
-        await pool.query(
-          `
-          UPDATE supabase_sync_queue
-          SET status = 'synced',
-              synced_at = now(),
-              last_error = NULL,
-              updated_at = now()
-          WHERE batch_id = $1
-          `,
-          [batchId]
-        );
-      } catch (err) {
-        await pool.query(
-          `
-          UPDATE supabase_sync_queue
-          SET status = 'failed',
-              retry_count = retry_count + 1,
-              last_error = $2,
-              updated_at = now()
-          WHERE batch_id = $1
-          `,
-          [batchId, err.message]
-        );
-      }
-    }
-  } finally {
-    isSyncInProgress = false;
-  }
-}
-
 app.get('/api/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
@@ -492,42 +261,6 @@ app.get('/api/health', async (req, res) => {
       database: 'disconnected',
       message: err.message,
     });
-  }
-});
-
-app.get('/api/sync/status', async (req, res) => {
-  try {
-    const statsRes = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE status IN ('pending', 'processing')) AS pending_count,
-        COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
-        COUNT(*) FILTER (WHERE status = 'synced') AS synced_count,
-        MAX(last_attempt_at) AS last_attempt_at,
-        MAX(synced_at) AS last_synced_at
-      FROM supabase_sync_queue
-    `);
-
-    const stats = statsRes.rows[0] ?? {};
-    res.json({
-      configured: isSupabaseSyncConfigured(),
-      pendingCount: Number(stats.pending_count ?? 0),
-      failedCount: Number(stats.failed_count ?? 0),
-      syncedCount: Number(stats.synced_count ?? 0),
-      lastAttemptAt: stats.last_attempt_at ?? null,
-      lastSyncedAt: stats.last_synced_at ?? null,
-      inProgress: isSyncInProgress,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/sync/run', async (req, res) => {
-  try {
-    await runSupabaseSyncCycle();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
 });
 
@@ -554,8 +287,6 @@ app.patch('/api/images/:imageId', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Image not found' });
     }
-
-    await queueBatchForSupabaseSync(result.rows[0].batch_id);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -822,7 +553,6 @@ app.post('/api/analysis/save', async (req, res) => {
       }
     }
 
-    await queueBatchForSupabaseSync(batch.id, client);
     await client.query('COMMIT');
 
     res.json({
@@ -1332,7 +1062,6 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
       [savedResult.id]
     );
 
-    await queueBatchForSupabaseSync(batchId, client);
     await client.query('COMMIT');
 
     res.json({
@@ -1351,7 +1080,6 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
 const PORT = process.env.PORT || 3001;
 await ensureOriginalImageColumn();
 await ensureImageOrderColumn();
-await ensureSupabaseSyncQueueTable();
 
 app.listen(PORT, () => {
   console.log(`API server running on http://localhost:${PORT}`);
@@ -1360,21 +1088,4 @@ app.listen(PORT, () => {
       'Warning: DATABASE_URL not set. Create server/.env with your PostgreSQL connection string.'
     );
   }
-
-  if (!isSupabaseSyncConfigured()) {
-    console.warn(
-      'Supabase sync is disabled. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in server/.env.'
-    );
-    return;
-  }
-
-  setInterval(() => {
-    runSupabaseSyncCycle().catch((err) => {
-      console.error('Supabase sync cycle error:', err);
-    });
-  }, SYNC_INTERVAL_MS);
-
-  runSupabaseSyncCycle().catch((err) => {
-    console.error('Initial Supabase sync error:', err);
-  });
 });
