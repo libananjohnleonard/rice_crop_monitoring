@@ -16,12 +16,11 @@ import type {
   UploadSourceType,
 } from './UploadImages';
 import { ImageEditorModal } from './ImageEditorModal';
+import { supabase } from '../lib/supabaseClient';
 import {
   softenExclusionMaskPreview,
   softenFieldBoundaryPreview,
 } from '../lib/imageEditing';
-
-const API_BASE_URL = 'http://localhost:3001';
 
 export type AnalysisResultDetails = {
   status: 'Healthy' | 'Moderate' | 'Poor';
@@ -37,6 +36,9 @@ export type AnalysisResultDetails = {
   poorSections?: number;
   selectedSectionId?: string;
   gridEstimate?: string;
+  recommendations?: string;
+  analysisVersion?: number;
+  parentAnalysisResultId?: string | null;
   interpretation: string;
   gridRows?: number;
   gridCols?: number;
@@ -57,6 +59,10 @@ export type SectionResult = {
   recommendations?: string;
   isExcluded?: boolean;
   excludeReason?: string | null;
+  parentSectionId?: string | null;
+  level?: number;
+  gridRows?: number | null;
+  gridCols?: number | null;
 };
 
 export type WholeFieldImageResult = AnalysisResultDetails & {
@@ -936,21 +942,19 @@ function Workspace({
     setIsSavingExcluded(true);
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/analysis/sections/${targetSection.id}/exclude`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            isExcluded: shouldExclude,
-            excludeReason: shouldExclude ? 'Excluded from UI grid selection' : null,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to save section exclusion');
+      if (!supabase) {
+        throw new Error('Supabase is not configured');
       }
+      const { error } = await supabase
+        .from('analysis_sections')
+        .update({
+          is_excluded: shouldExclude,
+          excluded_at: shouldExclude ? new Date().toISOString() : null,
+          exclude_reason: shouldExclude ? 'Excluded from UI grid selection' : null,
+        })
+        .eq('id', targetSection.id);
+
+      if (error) throw error;
     } catch (error) {
       setExcludedSections(excludedSections);
       console.error('Save excluded section error:', error);

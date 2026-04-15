@@ -1,3 +1,5 @@
+import { supabase } from './supabaseClient';
+
 
 
 function toNumber(v: unknown): number {
@@ -32,16 +34,14 @@ export interface PlantAnalysis {
 }
 
 export async function insertPlantImage(image_data: string, captured_at?: string): Promise<PlantImage> {
-  const response = await fetch('http://localhost:3001/api/images', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image_data, captured_at }),
-  });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to save image');
-  }
-  return response.json();
+  if (!supabase) throw new Error('Supabase is not configured');
+  const { data, error } = await supabase
+    .from('plant_images')
+    .insert({ image_data, captured_at: captured_at ?? null })
+    .select('id,image_data,captured_at,created_at')
+    .single();
+  if (error) throw error;
+  return data;
 }
 
 // Insert plant analysis
@@ -56,16 +56,13 @@ export async function insertPlantAnalysis(data: {
   recommendations: string;
   analyzed_at?: string;
 }): Promise<PlantAnalysis> {
-  const response = await fetch('http://localhost:3001/api/analysis', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to save analysis');
-  }
-  const row = await response.json();
+  if (!supabase) throw new Error('Supabase is not configured');
+  const { data: row, error } = await supabase
+    .from('analysis_results')
+    .insert(data)
+    .select('*')
+    .single();
+  if (error) throw error;
   return {
     ...row,
     health_score: toNumber(row.health_score),
@@ -77,12 +74,13 @@ export async function insertPlantAnalysis(data: {
 
 // Fetch analyses with joined images
 export async function fetchAnalyses(limit = 50): Promise<AnalysisWithImage[]> {
-  const response = await fetch(`http://localhost:3001/api/analyses?limit=${limit}`);
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to fetch analyses');
-  }
-  const data = await response.json();
+  if (!supabase) throw new Error('Supabase is not configured');
+  const { data, error } = await supabase
+    .from('analysis_results')
+    .select('*')
+    .order('analyzed_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
   return (data || []).map((row: any) => ({
     ...row,
     health_score: toNumber(row.health_score),

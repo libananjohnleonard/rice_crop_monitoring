@@ -9,8 +9,8 @@ import {
   Upload,
 } from 'lucide-react';
 import type { AnalysisHistoryItem } from '../components/AnalysisResults';
+import { supabase } from '../lib/supabaseClient';
 
-const API_BASE_URL = 'http://localhost:3001';
 const ITEMS_PER_PAGE = 8;
 
 type SortOption = 'newest' | 'oldest' | 'category' | 'source';
@@ -77,14 +77,105 @@ export function ManageUploadsPage() {
     try {
       setIsLoading(true);
       setError('');
+      if (!supabase) {
+        throw new Error('Supabase is not configured');
+      }
+      const { data: resultRows, error: resultError } = await supabase
+        .from('analysis_results')
+        .select(`
+          id,
+          batch_id,
+          health_status,
+          health_score,
+          green_percentage,
+          yellow_percentage,
+          brown_percentage,
+          harvest_ready,
+          recommendations,
+          interpretation,
+          total_sections,
+          healthy_sections,
+          warning_sections,
+          poor_sections,
+          grid_estimate,
+          grid_rows,
+          grid_cols,
+          analysis_version,
+          parent_analysis_result_id,
+          analyzed_at,
+          analysis_batches (
+            id,
+            category,
+            flight_height_m,
+            source_type,
+            notes,
+            created_at
+          )
+        `)
+        .order('analyzed_at', { ascending: false })
+        .limit(100);
 
-      const response = await fetch(`${API_BASE_URL}/api/analyses`);
-      if (!response.ok) {
-        throw new Error('Failed to load uploads.');
+      if (resultError) throw resultError;
+
+      const mapped: AnalysisHistoryItem[] = [];
+      for (const row of resultRows ?? []) {
+        const batch = Array.isArray(row.analysis_batches)
+          ? row.analysis_batches[0]
+          : row.analysis_batches;
+        if (!batch?.id) continue;
+
+        const { data: imagesRows, error: imagesError } = await supabase
+          .from('plant_images')
+          .select('*')
+          .eq('batch_id', batch.id)
+          .order('image_order', { ascending: true });
+        if (imagesError) throw imagesError;
+
+        mapped.push({
+          id: batch.id,
+          createdAt: batch.created_at,
+          category: batch.category,
+          flightHeightM: batch.flight_height_m ? Number(batch.flight_height_m) : undefined,
+          sourceType: batch.source_type,
+          notes: batch.notes,
+          images: (imagesRows ?? []).map((img) => ({
+            id: img.id,
+            file: null,
+            preview: img.image_data,
+            imageData: img.image_data,
+            originalPreview: img.original_image_data ?? img.image_data,
+            capturedAt: img.captured_at,
+            sourceType: img.source_type,
+            droneModel: img.drone_model,
+            latitude: img.latitude ? Number(img.latitude) : undefined,
+            longitude: img.longitude ? Number(img.longitude) : undefined,
+            altitude: img.altitude ? Number(img.altitude) : undefined,
+          })),
+          result: {
+            status: row.health_status,
+            harvestReady: row.harvest_ready,
+            harvestStatus: row.harvest_ready ? 'Ready to Harvest' : 'Not Ready',
+            healthScore: row.health_score,
+            green: Number(row.green_percentage),
+            yellow: Number(row.yellow_percentage),
+            brown: Number(row.brown_percentage),
+            recommendations: row.recommendations,
+            totalSections: row.total_sections,
+            healthySections: row.healthy_sections,
+            warningSections: row.warning_sections,
+            poorSections: row.poor_sections,
+            gridEstimate: row.grid_estimate,
+            interpretation: row.interpretation,
+            gridRows: row.grid_rows,
+            gridCols: row.grid_cols,
+            analysisVersion: row.analysis_version,
+            parentAnalysisResultId: row.parent_analysis_result_id,
+            sections: [],
+          },
+        });
       }
 
-      const data: AnalysisHistoryItem[] = await response.json();
-      setItems(data);
+      setItems(mapped);
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : 'Failed to load uploads.'
@@ -191,14 +282,12 @@ export function ManageUploadsPage() {
       setError('');
 
       for (const batchId of batchIds) {
-        const response = await fetch(`${API_BASE_URL}/api/analyses/${batchId}`, {
-          method: 'DELETE',
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => null);
-          throw new Error(errorData?.error || 'Failed to delete upload.');
-        }
+        if (!supabase) throw new Error('Supabase is not configured');
+        const { error } = await supabase
+          .from('analysis_batches')
+          .delete()
+          .eq('id', batchId);
+        if (error) throw error;
       }
 
       const idSet = new Set(batchIds);
@@ -223,15 +312,12 @@ export function ManageUploadsPage() {
     try {
       setDeletingId(batchId);
       setError('');
-
-      const response = await fetch(`${API_BASE_URL}/api/analyses/${batchId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || 'Failed to delete upload.');
-      }
+      if (!supabase) throw new Error('Supabase is not configured');
+      const { error } = await supabase
+        .from('analysis_batches')
+        .delete()
+        .eq('id', batchId);
+      if (error) throw error;
 
       setItems((current) => {
         const nextItems = current.filter((item) => item.id !== batchId);
