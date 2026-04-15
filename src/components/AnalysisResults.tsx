@@ -16,7 +16,10 @@ import type {
   UploadSourceType,
 } from './UploadImages';
 import { ImageEditorModal } from './ImageEditorModal';
-import { softenExclusionMaskPreview } from '../lib/imageEditing';
+import {
+  softenExclusionMaskPreview,
+  softenFieldBoundaryPreview,
+} from '../lib/imageEditing';
 
 const API_BASE_URL = 'http://localhost:3001';
 
@@ -280,6 +283,7 @@ function GridOverlayPreview({
   const [pinnedCell, setPinnedCell] = useState<SectionResult | null>(null);
   const [imageAspectRatio, setImageAspectRatio] = useState(4 / 3);
   const [displayImageSrc, setDisplayImageSrc] = useState(imageSrc);
+  const [previewImageSrc, setPreviewImageSrc] = useState(imageSrc);
 
   const rows = clampGridSize(gridRows);
   const cols = clampGridSize(gridCols);
@@ -306,6 +310,34 @@ function GridOverlayPreview({
       cancelled = true;
     };
   }, [imageSrc]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderPreviewImage = async () => {
+      if (!originalImageSrc || originalImageSrc === imageSrc) {
+        setPreviewImageSrc(imageSrc);
+        return;
+      }
+
+      try {
+        const softenedPreview = await softenFieldBoundaryPreview(imageSrc);
+        if (!cancelled) {
+          setPreviewImageSrc(softenedPreview);
+        }
+      } catch {
+        if (!cancelled) {
+          setPreviewImageSrc(imageSrc);
+        }
+      }
+    };
+
+    void renderPreviewImage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imageSrc, originalImageSrc]);
 
   const sectionMap = useMemo(() => {
     const map = new Map<string, SectionResult>();
@@ -345,6 +377,8 @@ function GridOverlayPreview({
   const activeExcluded = activeCell
     ? excludedSections.has(activeCell.sectionLabel)
     : false;
+  const previewModeLabel =
+    originalImageSrc && originalImageSrc !== imageSrc ? 'Edited' : 'Original';
 
   const handleCellClick = (section?: SectionResult) => {
     if (!section) return;
@@ -407,10 +441,26 @@ function GridOverlayPreview({
               className="relative w-full max-w-full overflow-hidden rounded-xl bg-slate-100"
               style={{ aspectRatio: `${imageAspectRatio}` }}
             >
+              <div className="pointer-events-none absolute left-4 top-3 z-10">
+                <p className="text-base font-semibold text-emerald-900">
+                  Preview: <span className="text-emerald-700">{previewModeLabel}</span>
+                </p>
+              </div>
+              {previewModeLabel === 'Edited' && originalImageSrc && (
+                <>
+                  <img
+                    src={originalImageSrc}
+                    alt=""
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 h-full w-full scale-[1.01] object-contain opacity-85 blur-[1.5px]"
+                  />
+                  <div className="pointer-events-none absolute inset-0 bg-black/16" />
+                </>
+              )}
               <img
-                src={displayImageSrc}
+                src={previewImageSrc}
                 alt="Uploaded preview"
-                className="h-full w-full object-contain"
+                className="relative h-full w-full object-contain"
                 onLoad={(event) => {
                   const { naturalWidth, naturalHeight } = event.currentTarget;
                   if (naturalWidth > 0 && naturalHeight > 0) {
@@ -418,6 +468,30 @@ function GridOverlayPreview({
                   }
                 }}
               />
+              {previewModeLabel === 'Edited' && (
+                <img
+                  src={previewImageSrc}
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-20"
+                  style={{
+                    filter:
+                      'sepia(1) saturate(6) hue-rotate(32deg) brightness(0.95)',
+                  }}
+                />
+              )}
+              {previewModeLabel === 'Edited' && (
+                <img
+                  src={previewImageSrc}
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+                  style={{
+                    filter:
+                      'drop-shadow(0 0 0.75px rgba(16, 185, 129, 0.95)) drop-shadow(0 0 1.25px rgba(16, 185, 129, 0.75))',
+                  }}
+                />
+              )}
               <div
                 className="pointer-events-none absolute inset-0 grid"
                 style={{
@@ -733,10 +807,45 @@ function Workspace({
   const hasOriginalPreview =
     Boolean(activeImage?.originalPreview) &&
     activeImage?.originalPreview !== activeImage?.preview;
+  const previewModeLabel = hasOriginalPreview ? 'Edited' : 'Original';
+  const [previewDisplaySrc, setPreviewDisplaySrc] = useState<string | null>(null);
 
   useEffect(() => {
     setCurrentImageIndex(0);
   }, [data?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderPreviewDisplay = async () => {
+      if (!activeImage?.preview) {
+        setPreviewDisplaySrc(null);
+        return;
+      }
+
+      if (!hasOriginalPreview) {
+        setPreviewDisplaySrc(activeImage.preview);
+        return;
+      }
+
+      try {
+        const softenedPreview = await softenFieldBoundaryPreview(activeImage.preview);
+        if (!cancelled) {
+          setPreviewDisplaySrc(softenedPreview);
+        }
+      } catch {
+        if (!cancelled) {
+          setPreviewDisplaySrc(activeImage.preview);
+        }
+      }
+    };
+
+    void renderPreviewDisplay();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeImage?.preview, hasOriginalPreview]);
 
   useEffect(() => {
     const nextExcluded = new Set(
@@ -1196,11 +1305,53 @@ function Workspace({
                 className="block w-full"
                 title="Open full preview"
               >
-                <img
-                  src={activeImage.preview}
-                  alt="Analysis preview"
-                  className="max-h-72 w-full rounded-xl bg-slate-100 object-contain"
-                />
+                <div className="relative overflow-hidden rounded-xl bg-slate-100">
+                  <div className="pointer-events-none absolute left-4 top-3 z-10">
+                    <p className="text-base font-semibold text-emerald-900">
+                      Preview: <span className="text-emerald-700">{previewModeLabel}</span>
+                    </p>
+                  </div>
+                  {hasOriginalPreview && activeImage.originalPreview && (
+                    <>
+                      <img
+                        src={activeImage.originalPreview}
+                        alt=""
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 h-full max-h-72 w-full scale-[1.01] object-contain opacity-85 blur-[1.5px]"
+                      />
+                      <div className="pointer-events-none absolute inset-0 bg-black/16" />
+                    </>
+                  )}
+                  <img
+                    src={previewDisplaySrc ?? activeImage.preview}
+                    alt="Analysis preview"
+                    className="relative max-h-72 w-full object-contain"
+                  />
+                  {hasOriginalPreview && (
+                    <img
+                      src={previewDisplaySrc ?? activeImage.preview}
+                      alt=""
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 h-full max-h-72 w-full object-contain opacity-20"
+                      style={{
+                        filter:
+                          'sepia(1) saturate(6) hue-rotate(32deg) brightness(0.95)',
+                      }}
+                    />
+                  )}
+                  {hasOriginalPreview && (
+                    <img
+                      src={previewDisplaySrc ?? activeImage.preview}
+                      alt=""
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 h-full max-h-72 w-full object-contain"
+                      style={{
+                        filter:
+                          'drop-shadow(0 0 0.75px rgba(16, 185, 129, 0.95)) drop-shadow(0 0 1.25px rgba(16, 185, 129, 0.75))',
+                      }}
+                    />
+                  )}
+                </div>
               </button>
             )
           ) : (
@@ -1221,7 +1372,7 @@ function Workspace({
       {activeImage && isEditorOpen && onUpdateImage && (
         <ImageEditorModal
           open
-          imageSrc={activeImage.imageData || activeImage.preview}
+          imageSrc={activeImage.preview}
           originalImageSrc={activeImage.originalPreview}
           fileName={activeImage.file?.name || `analysis-image-${safeImageIndex + 1}.png`}
           title={`Edit ${hasMultipleImages ? `Image ${safeImageIndex + 1}` : 'Analysis Image'}`}

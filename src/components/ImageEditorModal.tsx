@@ -367,6 +367,18 @@ export function ImageEditorModal({
     [edits.crop.bottom, edits.crop.left, edits.crop.right, edits.crop.top]
   );
 
+  const hasPreviewEdits = useMemo(
+    () =>
+      !isDefaultImageEdits(edits) ||
+      brushStrokes.length > 0 ||
+      includeRegions.length > 0 ||
+      excludeBoxes.length > 0,
+    [brushStrokes.length, edits, excludeBoxes.length, includeRegions.length]
+  );
+
+  const previewModeLabel = hasPreviewEdits ? 'Edited' : 'Original';
+  const previewLabel = `Preview: ${previewModeLabel}`;
+
   const cropFrame = useMemo(
     () =>
       previewBounds
@@ -874,118 +886,123 @@ export function ImageEditorModal({
               </div>
             )}
 
-            <div
-              ref={containerRef}
-              className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-slate-100 p-3"
-            >
-              <img
-                ref={imageRef}
-                src={imageSrc}
-                alt="Edited preview"
-                onLoad={updatePreviewBounds}
-                className="h-full w-full rounded-xl object-contain"
-                style={{
-                  transform: `rotate(${edits.rotation}deg)`,
-                  transformOrigin: 'center',
-                  willChange: 'transform',
-                }}
-              />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-emerald-200 bg-white">
+              <div className="border-b border-emerald-100 px-4 py-3">
+                <p className="text-sm font-semibold text-emerald-900">{previewLabel}</p>
+              </div>
 
-              {previewBounds && cropFrame && (
-                <>
-                  <div
-                    className="pointer-events-none absolute bg-black/40"
-                    style={{
-                      left: previewBounds.left,
-                      top: previewBounds.top,
-                      width: previewBounds.width,
-                      height: Math.max(0, cropFrame.top - previewBounds.top),
-                    }}
-                  />
-                  <div
-                    className="pointer-events-none absolute bg-black/40"
-                    style={{
-                      left: previewBounds.left,
-                      top: cropFrame.top,
-                      width: Math.max(0, cropFrame.left - previewBounds.left),
-                      height: cropFrame.height,
-                    }}
-                  />
-                  <div
-                    className="pointer-events-none absolute bg-black/40"
-                    style={{
-                      left: cropFrame.left + cropFrame.width,
-                      top: cropFrame.top,
-                      width: Math.max(
-                        0,
-                        previewBounds.left + previewBounds.width - (cropFrame.left + cropFrame.width)
-                      ),
-                      height: cropFrame.height,
-                    }}
-                  />
-                  <div
-                    className="pointer-events-none absolute bg-black/40"
-                    style={{
-                      left: previewBounds.left,
-                      top: cropFrame.top + cropFrame.height,
-                      width: previewBounds.width,
-                      height: Math.max(
-                        0,
-                        previewBounds.top + previewBounds.height - (cropFrame.top + cropFrame.height)
-                      ),
-                    }}
-                  />
+              <div
+                ref={containerRef}
+                className="relative min-h-0 flex-1 overflow-hidden bg-slate-100 p-3"
+              >
+                <img
+                  ref={imageRef}
+                  src={imageSrc}
+                  alt={previewLabel}
+                  onLoad={updatePreviewBounds}
+                  className="h-full w-full rounded-xl object-contain"
+                  style={{
+                    transform: `rotate(${edits.rotation}deg)`,
+                    transformOrigin: 'center',
+                    willChange: 'transform',
+                  }}
+                />
 
-                  <div
-                    className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
-                    style={{
-                      left: cropFrame.left,
-                      top: cropFrame.top,
-                      width: cropFrame.width,
-                      height: cropFrame.height,
-                    }}
-                  />
+                {previewBounds && cropFrame && (
+                  <>
+                    <div
+                      className="pointer-events-none absolute bg-black/40"
+                      style={{
+                        left: previewBounds.left,
+                        top: previewBounds.top,
+                        width: previewBounds.width,
+                        height: Math.max(0, cropFrame.top - previewBounds.top),
+                      }}
+                    />
+                    <div
+                      className="pointer-events-none absolute bg-black/40"
+                      style={{
+                        left: previewBounds.left,
+                        top: cropFrame.top,
+                        width: Math.max(0, cropFrame.left - previewBounds.left),
+                        height: cropFrame.height,
+                      }}
+                    />
+                    <div
+                      className="pointer-events-none absolute bg-black/40"
+                      style={{
+                        left: cropFrame.left + cropFrame.width,
+                        top: cropFrame.top,
+                        width: Math.max(
+                          0,
+                          previewBounds.left + previewBounds.width - (cropFrame.left + cropFrame.width)
+                        ),
+                        height: cropFrame.height,
+                      }}
+                    />
+                    <div
+                      className="pointer-events-none absolute bg-black/40"
+                      style={{
+                        left: previewBounds.left,
+                        top: cropFrame.top + cropFrame.height,
+                        width: previewBounds.width,
+                        height: Math.max(
+                          0,
+                          previewBounds.top + previewBounds.height - (cropFrame.top + cropFrame.height)
+                        ),
+                      }}
+                    />
 
-                  <div
-                    ref={brushLayerRef}
-                    className={`absolute overflow-hidden ${
-                      editorMode === 'crop' ? 'pointer-events-none' : 'cursor-crosshair'
-                    }`}
-                    style={{
-                      left: cropFrame.left,
-                      top: cropFrame.top,
-                      width: cropFrame.width,
-                      height: cropFrame.height,
-                    }}
-                    onPointerDown={
-                      editorMode === 'brush'
-                        ? startBrushStroke
-                        : editorMode === 'includeBrush'
-                          ? startIncludeRegion
-                          : editorMode === 'excludeBox'
-                            ? startSelectionBox
-                            : undefined
-                    }
-                    onPointerMove={
-                      editorMode !== 'crop'
-                        ? (event) => updateBrushCursor(event.clientX, event.clientY)
-                        : undefined
-                    }
-                    onPointerEnter={
-                      editorMode !== 'crop'
-                        ? (event) => updateBrushCursor(event.clientX, event.clientY)
-                        : undefined
-                    }
-                    onPointerLeave={
-                      editorMode !== 'crop'
-                        ? () => {
-                            if (!isDrawing && !boxDraft) {
-                              setBrushCursorPoint(null);
+                    <div
+                      className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
+                      style={{
+                        left: cropFrame.left,
+                        top: cropFrame.top,
+                        width: cropFrame.width,
+                        height: cropFrame.height,
+                      }}
+                    />
+
+                    <div
+                      ref={brushLayerRef}
+                      className={`absolute overflow-hidden ${
+                        editorMode === 'crop' ? 'pointer-events-none' : 'cursor-crosshair'
+                      }`}
+                      style={{
+                        left: cropFrame.left,
+                        top: cropFrame.top,
+                        width: cropFrame.width,
+                        height: cropFrame.height,
+                      }}
+                      onPointerDown={
+                        editorMode === 'brush'
+                          ? startBrushStroke
+                          : editorMode === 'includeBrush'
+                            ? startIncludeRegion
+                            : editorMode === 'excludeBox'
+                              ? startSelectionBox
+                              : undefined
+                      }
+                      onPointerMove={
+                        editorMode !== 'crop'
+                          ? (event) => updateBrushCursor(event.clientX, event.clientY)
+                          : undefined
+                      }
+                      onPointerEnter={
+                        editorMode !== 'crop'
+                          ? (event) => updateBrushCursor(event.clientX, event.clientY)
+                          : undefined
+                      }
+                      onPointerLeave={
+                        editorMode !== 'crop'
+                          ? () => {
+                              if (!isDrawing && !boxDraft) {
+                                setBrushCursorPoint(null);
+                              }
                             }
-                          }
-                        : undefined
-                    }
-                  >
+                          : undefined
+                      }
+                    >
                     {editorMode !== 'crop' && (
                       <div
                         className="pointer-events-none absolute inset-0"
@@ -1158,78 +1175,79 @@ export function ImageEditorModal({
                     )}
                   </div>
 
-                  {editorMode === 'crop' && (
-                    <>
-                      <button
-                        type="button"
-                        aria-label="Crop top left"
-                        onPointerDown={(event) => startHandleDrag('topLeft', event)}
-                        className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize rounded-sm border border-black bg-white"
-                        style={{ left: cropFrame.left, top: cropFrame.top }}
-                      />
-                      <button
-                        type="button"
-                        aria-label="Crop top right"
-                        onPointerDown={(event) => startHandleDrag('topRight', event)}
-                        className="absolute h-4 w-4 -translate-y-1/2 translate-x-1/2 cursor-nesw-resize rounded-sm border border-black bg-white"
-                        style={{ left: cropFrame.left + cropFrame.width, top: cropFrame.top }}
-                      />
-                      <button
-                        type="button"
-                        aria-label="Crop bottom left"
-                        onPointerDown={(event) => startHandleDrag('bottomLeft', event)}
-                        className="absolute h-4 w-4 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize rounded-sm border border-black bg-white"
-                        style={{ left: cropFrame.left, top: cropFrame.top + cropFrame.height }}
-                      />
-                      <button
-                        type="button"
-                        aria-label="Crop bottom right"
-                        onPointerDown={(event) => startHandleDrag('bottomRight', event)}
-                        className="absolute h-4 w-4 translate-x-1/2 translate-y-1/2 cursor-nwse-resize rounded-sm border border-black bg-white"
-                        style={{
-                          left: cropFrame.left + cropFrame.width,
-                          top: cropFrame.top + cropFrame.height,
-                        }}
-                      />
+                    {editorMode === 'crop' && (
+                      <>
+                        <button
+                          type="button"
+                          aria-label="Crop top left"
+                          onPointerDown={(event) => startHandleDrag('topLeft', event)}
+                          className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize rounded-sm border border-black bg-white"
+                          style={{ left: cropFrame.left, top: cropFrame.top }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="Crop top right"
+                          onPointerDown={(event) => startHandleDrag('topRight', event)}
+                          className="absolute h-4 w-4 -translate-y-1/2 translate-x-1/2 cursor-nesw-resize rounded-sm border border-black bg-white"
+                          style={{ left: cropFrame.left + cropFrame.width, top: cropFrame.top }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="Crop bottom left"
+                          onPointerDown={(event) => startHandleDrag('bottomLeft', event)}
+                          className="absolute h-4 w-4 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize rounded-sm border border-black bg-white"
+                          style={{ left: cropFrame.left, top: cropFrame.top + cropFrame.height }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="Crop bottom right"
+                          onPointerDown={(event) => startHandleDrag('bottomRight', event)}
+                          className="absolute h-4 w-4 translate-x-1/2 translate-y-1/2 cursor-nwse-resize rounded-sm border border-black bg-white"
+                          style={{
+                            left: cropFrame.left + cropFrame.width,
+                            top: cropFrame.top + cropFrame.height,
+                          }}
+                        />
 
-                      <button
-                        type="button"
-                        aria-label="Crop top"
-                        onPointerDown={(event) => startHandleDrag('top', event)}
-                        className="absolute h-3 w-8 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize rounded-sm border border-black bg-white"
-                        style={{ left: cropFrame.left + cropFrame.width / 2, top: cropFrame.top }}
-                      />
-                      <button
-                        type="button"
-                        aria-label="Crop bottom"
-                        onPointerDown={(event) => startHandleDrag('bottom', event)}
-                        className="absolute h-3 w-8 -translate-x-1/2 translate-y-1/2 cursor-ns-resize rounded-sm border border-black bg-white"
-                        style={{
-                          left: cropFrame.left + cropFrame.width / 2,
-                          top: cropFrame.top + cropFrame.height,
-                        }}
-                      />
-                      <button
-                        type="button"
-                        aria-label="Crop left"
-                        onPointerDown={(event) => startHandleDrag('left', event)}
-                        className="absolute h-8 w-3 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-black bg-white"
-                        style={{ left: cropFrame.left, top: cropFrame.top + cropFrame.height / 2 }}
-                      />
-                      <button
-                        type="button"
-                        aria-label="Crop right"
-                        onPointerDown={(event) => startHandleDrag('right', event)}
-                        className="absolute h-8 w-3 translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-black bg-white"
-                        style={{
-                          left: cropFrame.left + cropFrame.width,
-                          top: cropFrame.top + cropFrame.height / 2,
-                        }}
-                      />
-                    </>
-                  )}
-                </>
-              )}
+                        <button
+                          type="button"
+                          aria-label="Crop top"
+                          onPointerDown={(event) => startHandleDrag('top', event)}
+                          className="absolute h-3 w-8 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize rounded-sm border border-black bg-white"
+                          style={{ left: cropFrame.left + cropFrame.width / 2, top: cropFrame.top }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="Crop bottom"
+                          onPointerDown={(event) => startHandleDrag('bottom', event)}
+                          className="absolute h-3 w-8 -translate-x-1/2 translate-y-1/2 cursor-ns-resize rounded-sm border border-black bg-white"
+                          style={{
+                            left: cropFrame.left + cropFrame.width / 2,
+                            top: cropFrame.top + cropFrame.height,
+                          }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="Crop left"
+                          onPointerDown={(event) => startHandleDrag('left', event)}
+                          className="absolute h-8 w-3 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-black bg-white"
+                          style={{ left: cropFrame.left, top: cropFrame.top + cropFrame.height / 2 }}
+                        />
+                        <button
+                          type="button"
+                          aria-label="Crop right"
+                          onPointerDown={(event) => startHandleDrag('right', event)}
+                          className="absolute h-8 w-3 translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-black bg-white"
+                          style={{
+                            left: cropFrame.left + cropFrame.width,
+                            top: cropFrame.top + cropFrame.height / 2,
+                          }}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
             <p className="mt-3 text-xs text-emerald-700">
               {editorMode === 'crop'

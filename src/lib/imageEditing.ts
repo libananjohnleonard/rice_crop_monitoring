@@ -340,6 +340,56 @@ export async function softenExclusionMaskPreview(src: string): Promise<string> {
   return canvas.toDataURL('image/png');
 }
 
+export async function softenFieldBoundaryPreview(src: string): Promise<string> {
+  if (!src) {
+    throw new Error('No image source provided.');
+  }
+
+  const image = await loadImage(src);
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    throw new Error('Could not create softened field preview canvas.');
+  }
+
+  context.drawImage(image, 0, 0);
+
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const { data } = imageData;
+  const maskColor = hexToRgb(EXCLUSION_MASK_COLOR);
+
+  for (let index = 0; index < data.length; index += 4) {
+    const r = data[index];
+    const g = data[index + 1];
+    const b = data[index + 2];
+
+    const isNearWhite = r >= 245 && g >= 245 && b >= 245;
+    const isMaskPixel =
+      Math.abs(r - maskColor.r) <= 8 &&
+      Math.abs(g - maskColor.g) <= 8 &&
+      Math.abs(b - maskColor.b) <= 8;
+
+    if (isNearWhite) {
+      data[index + 3] = 0;
+      continue;
+    }
+
+    if (isMaskPixel) {
+      data[index] = 255;
+      data[index + 1] = 255;
+      data[index + 2] = 255;
+      data[index + 3] = 72;
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
 export function dataUrlToFile(dataUrl: string, fileName: string) {
   const [header, content] = dataUrl.split(',');
   const mimeMatch = header.match(/data:(.*?);base64/);
