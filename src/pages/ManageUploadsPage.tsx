@@ -102,15 +102,7 @@ export function ManageUploadsPage() {
           grid_cols,
           analysis_version,
           parent_analysis_result_id,
-          analyzed_at,
-          analysis_batches (
-            id,
-            category,
-            flight_height_m,
-            source_type,
-            notes,
-            created_at
-          )
+          analyzed_at
         `)
         .order('analyzed_at', { ascending: false })
         .limit(100);
@@ -119,9 +111,12 @@ export function ManageUploadsPage() {
 
       const mapped: AnalysisHistoryItem[] = [];
       for (const row of resultRows ?? []) {
-        const batch = Array.isArray(row.analysis_batches)
-          ? row.analysis_batches[0]
-          : row.analysis_batches;
+        const { data: batch, error: batchError } = await supabase
+          .from('analysis_batches')
+          .select('*')
+          .eq('id', row.batch_id)
+          .single();
+        if (batchError) throw batchError;
         if (!batch?.id) continue;
 
         const { data: imagesRows, error: imagesError } = await supabase
