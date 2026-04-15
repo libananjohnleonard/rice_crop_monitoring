@@ -9,7 +9,7 @@ import {
   summarizeWholeFieldImageResults,
 } from '../lib/fieldAnalysis';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3002';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 type SyncStatus = {
   configured: boolean;
@@ -39,6 +39,7 @@ export function HomePage() {
     inProgress: false,
   });
   const [isManualSyncing, setIsManualSyncing] = useState(false);
+  const hasSyncQueueItems = syncStatus.pendingCount > 0 || syncStatus.failedCount > 0;
 
   const fetchSyncStatus = async () => {
     const response = await fetch(`${API_BASE_URL}/api/sync/status`);
@@ -432,7 +433,7 @@ useEffect(() => {
               >
                 {syncStatus.configured && isSupabaseConfigured
                   ? 'Supabase connected'
-                  : 'Local mode'}
+                  : 'Supabase required'}
               </span>
             </div>
           </div>
@@ -469,14 +470,16 @@ useEffect(() => {
                 {syncStatus.pendingCount}
                 {syncStatus.failedCount > 0 ? ` (${syncStatus.failedCount} failed)` : ''}
               </p>
-              <button
-                type="button"
-                onClick={handleSyncNow}
-                disabled={!syncStatus.configured || isManualSyncing}
-                className="mt-1 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
-              >
-                {isManualSyncing || syncStatus.inProgress ? 'Syncing...' : 'Sync now'}
-              </button>
+              {hasSyncQueueItems ? (
+                <button
+                  type="button"
+                  onClick={handleSyncNow}
+                  disabled={!syncStatus.configured || isManualSyncing}
+                  className="mt-1 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                >
+                  {isManualSyncing || syncStatus.inProgress ? 'Syncing...' : 'Sync now'}
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
