@@ -6,6 +6,7 @@ import { HomePage } from './pages/HomePage';
 import { AnalysisPage } from './pages/AnalysisPage';
 import { DocsPage } from './pages/DocsPage';
 import { AboutPage } from './pages/AboutPage';
+import { ManageUploadsPage } from './pages/ManageUploadsPage';
 
 function App() {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -21,6 +22,7 @@ function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/analysis" element={<AnalysisPage />} />
+            <Route path="/manage-uploads" element={<ManageUploadsPage />} />
             {/* <Route path="/desktop" element={<DesktopSyncPage />} /> */}
             <Route path="/docs" element={<DocsPage />} />
             <Route

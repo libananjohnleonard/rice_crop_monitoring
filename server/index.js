@@ -13,6 +13,44 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 
+async function ensureOriginalImageColumn() {
+  await pool.query(`
+    ALTER TABLE plant_images
+    ADD COLUMN IF NOT EXISTS original_image_data text
+  `);
+
+  await pool.query(`
+    UPDATE plant_images
+    SET original_image_data = image_data
+    WHERE original_image_data IS NULL
+  `);
+}
+
+async function ensureImageOrderColumn() {
+  await pool.query(`
+    ALTER TABLE plant_images
+    ADD COLUMN IF NOT EXISTS image_order integer
+  `);
+
+  await pool.query(`
+    WITH ranked AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          PARTITION BY batch_id
+          ORDER BY created_at ASC, id ASC
+        ) - 1 AS next_image_order
+      FROM plant_images
+      WHERE batch_id IS NOT NULL
+    )
+    UPDATE plant_images AS target
+    SET image_order = ranked.next_image_order
+    FROM ranked
+    WHERE target.id = ranked.id
+      AND target.image_order IS NULL
+  `);
+}
+
 function round1(value) {
   return Math.round(value * 10) / 10;
 }
@@ -21,6 +59,33 @@ function getStatusFromScore(score) {
   if (score >= 75) return 'Healthy';
   if (score >= 55) return 'Moderate';
   return 'Poor';
+}
+
+function getHarvestStatus(yellowPercentage, greenPercentage, healthScore) {
+  if (
+    yellowPercentage >= 55 ||
+    (yellowPercentage >= 35 && healthScore < 45)
+  ) {
+    return 'Needs Attention or Overripe';
+  }
+
+  if (
+    yellowPercentage >= 30 &&
+    yellowPercentage >= greenPercentage * 0.8 &&
+    healthScore >= 45
+  ) {
+    return 'Ready to Harvest';
+  }
+
+  if (
+    yellowPercentage >= 15 &&
+    yellowPercentage >= greenPercentage * 0.3 &&
+    healthScore >= 40
+  ) {
+    return 'Nearly Ready';
+  }
+
+  return 'Not Ready';
 }
 
 function buildInterpretation(category, excludedCount = 0) {
@@ -92,12 +157,22 @@ function summarizeSections(sections, category) {
     safeSections.reduce((sum, item) => sum + item.brownPercentage, 0) /
     totalSections;
   const excludedCount = sections.length - safeSections.length;
+  const roundedHealthScore = Math.round(avgHealth);
+  const roundedGreen = round1(avgGreen);
+  const roundedYellow = round1(avgYellow);
+  const harvestStatus = getHarvestStatus(
+    roundedYellow,
+    roundedGreen,
+    roundedHealthScore
+  );
 
   return {
-    status: getStatusFromScore(Math.round(avgHealth)),
-    healthScore: Math.round(avgHealth),
-    green: round1(avgGreen),
-    yellow: round1(avgYellow),
+    status: getStatusFromScore(roundedHealthScore),
+    harvestReady: harvestStatus === 'Ready to Harvest',
+    harvestStatus,
+    healthScore: roundedHealthScore,
+    green: roundedGreen,
+    yellow: roundedYellow,
     brown: round1(avgBrown),
     totalSections,
     healthySections,
@@ -141,9 +216,20 @@ function summarizeWholeFieldImageResults(imageResults) {
     (sum, item) => sum + (item.poorSections ?? 0),
     0
   );
+  const harvestStatus = imageResults.some(
+    (item) => item.harvestStatus === 'Needs Attention or Overripe'
+  )
+    ? 'Needs Attention or Overripe'
+    : imageResults.some((item) => item.harvestStatus === 'Ready to Harvest')
+      ? 'Ready to Harvest'
+      : imageResults.some((item) => item.harvestStatus === 'Nearly Ready')
+        ? 'Nearly Ready'
+        : 'Not Ready';
 
   return {
     status: getStatusFromScore(Math.round(avgHealth)),
+    harvestReady: harvestStatus === 'Ready to Harvest',
+    harvestStatus,
     healthScore: Math.round(avgHealth),
     green: round1(avgGreen),
     yellow: round1(avgYellow),
@@ -174,6 +260,37 @@ app.get('/api/health', async (req, res) => {
       database: 'disconnected',
       message: err.message,
     });
+  }
+});
+
+app.patch('/api/images/:imageId', async (req, res) => {
+  try {
+    const { imageId } = req.params;
+    const { imageData, capturedAt } = req.body;
+
+    if (!imageData) {
+      return res.status(400).json({ error: 'imageData is required' });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE plant_images
+      SET image_data = $1,
+          captured_at = COALESCE($2::timestamptz, captured_at)
+      WHERE id = $3
+      RETURNING *
+      `,
+      [imageData, capturedAt ?? null, imageId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Update image error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -222,12 +339,14 @@ app.post('/api/analysis/save', async (req, res) => {
 
     // 2) save uploaded images
     const savedImages = [];
-    for (const image of images) {
+    for (const [imageIndex, image] of images.entries()) {
       const imageInsert = await client.query(
         `
         INSERT INTO plant_images (
           batch_id,
+          image_order,
           image_data,
+          original_image_data,
           captured_at,
           source_type,
           drone_model,
@@ -235,12 +354,14 @@ app.post('/api/analysis/save', async (req, res) => {
           longitude,
           altitude
         )
-        VALUES ($1, $2, COALESCE($3::timestamptz, now()), $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, now()), $6, $7, $8, $9, $10)
         RETURNING *
         `,
         [
           batch.id,
+          imageIndex,
           image.imageData ?? image.preview,
+          image.originalPreview ?? image.imageData ?? image.preview,
           image.capturedAt ?? null,
           image.sourceType ?? sourceType ?? 'upload',
           image.droneModel ?? null,
@@ -291,8 +412,8 @@ app.post('/api/analysis/save', async (req, res) => {
         result.green ?? 0,
         result.yellow ?? 0,
         result.brown ?? 0,
-        false,
-        null,
+        result.harvestReady ?? false,
+        result.recommendations ?? null,
         result.interpretation ?? null,
         result.totalSections ?? null,
         result.healthySections ?? null,
@@ -468,6 +589,8 @@ app.get('/api/analyses', async (req, res) => {
         ar.green_percentage,
         ar.yellow_percentage,
         ar.brown_percentage,
+        ar.harvest_ready,
+        ar.recommendations,
         ar.interpretation,
         ar.total_sections,
         ar.healthy_sections,
@@ -497,7 +620,7 @@ app.get('/api/analyses', async (req, res) => {
         SELECT *
         FROM plant_images
         WHERE batch_id = $1
-        ORDER BY created_at ASC
+        ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
         `,
         [row.batch_id]
       );
@@ -524,8 +647,15 @@ app.get('/api/analyses', async (req, res) => {
         images: imagesRes.rows.map((img) => ({
           id: img.id,
           file: null,
+          imageOrder:
+            typeof img.image_order === 'number'
+              ? img.image_order
+              : img.image_order != null
+                ? Number(img.image_order)
+                : undefined,
           preview: img.image_data,
           imageData: img.image_data,
+          originalPreview: img.original_image_data ?? img.image_data,
           capturedAt: img.captured_at,
           sourceType: img.source_type,
           droneModel: img.drone_model,
@@ -584,6 +714,7 @@ app.get('/api/analyses', async (req, res) => {
             if (imageResults.length > 0) {
               return {
                 ...summarizeWholeFieldImageResults(imageResults),
+                recommendations: row.recommendations,
                 analysisVersion: row.analysis_version,
                 parentAnalysisResultId: row.parent_analysis_result_id,
               };
@@ -592,10 +723,13 @@ app.get('/api/analyses', async (req, res) => {
 
           return {
             status: row.health_status,
+            harvestReady: row.harvest_ready,
+            harvestStatus: row.harvest_ready ? 'Ready to Harvest' : 'Not Ready',
             healthScore: row.health_score,
             green: Number(row.green_percentage),
             yellow: Number(row.yellow_percentage),
             brown: Number(row.brown_percentage),
+            recommendations: row.recommendations,
             totalSections: row.total_sections,
             healthySections: row.healthy_sections,
             warningSections: row.warning_sections,
@@ -616,6 +750,43 @@ app.get('/api/analyses', async (req, res) => {
   } catch (err) {
     console.error('Fetch analyses error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/analyses/:batchId', async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const { batchId } = req.params;
+
+    await client.query('BEGIN');
+
+    const deleteResult = await client.query(
+      `
+      DELETE FROM analysis_batches
+      WHERE id = $1
+      RETURNING id
+      `,
+      [batchId]
+    );
+
+    if (deleteResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Analysis batch not found' });
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      deleted: true,
+      batchId: deleteResult.rows[0].id,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Delete analysis batch error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -727,8 +898,8 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
         result.green ?? 0,
         result.yellow ?? 0,
         result.brown ?? 0,
-        false,
-        null,
+        result.harvestReady ?? false,
+        result.recommendations ?? null,
         result.interpretation ?? null,
         result.totalSections ?? null,
         result.healthySections ?? null,
@@ -742,6 +913,143 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
     );
 
     const savedResult = resultUpdate.rows[0];
+
+    const imagesRes = await client.query(
+      `
+      SELECT *
+      FROM plant_images
+      WHERE batch_id = $1
+      ORDER BY image_order ASC NULLS LAST, created_at ASC, id ASC
+      `,
+      [batchId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM analysis_sections
+      WHERE analysis_result_id = $1
+      `,
+      [savedResult.id]
+    );
+
+    const savedSections = [];
+
+    if (Array.isArray(result.imageResults) && result.imageResults.length > 0) {
+      for (const imageResult of result.imageResults) {
+        const savedImage = imagesRes.rows[imageResult.imageIndex];
+        const imageSections = Array.isArray(imageResult.sections)
+          ? imageResult.sections
+          : [];
+
+        for (const section of imageSections) {
+          const sectionInsert = await client.query(
+            `
+            INSERT INTO analysis_sections (
+              analysis_result_id,
+              plant_image_id,
+              section_label,
+              row_index,
+              col_index,
+              health_status,
+              health_score,
+              green_percentage,
+              yellow_percentage,
+              brown_percentage,
+              recommendations,
+              is_excluded,
+              excluded_at,
+              exclude_reason,
+              parent_section_id,
+              level,
+              grid_rows,
+              grid_cols
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9,
+              $10, $11, $12, $13, $14, $15, $16, $17, $18
+            )
+            RETURNING *
+            `,
+            [
+              savedResult.id,
+              savedImage?.id ?? null,
+              section.sectionLabel,
+              section.rowIndex ?? null,
+              section.colIndex ?? null,
+              section.healthStatus,
+              section.healthScore,
+              section.greenPercentage ?? 0,
+              section.yellowPercentage ?? 0,
+              section.brownPercentage ?? 0,
+              section.recommendations ?? null,
+              section.isExcluded ?? false,
+              section.isExcluded ? new Date().toISOString() : null,
+              section.excludeReason ?? null,
+              section.parentSectionId ?? null,
+              section.level ?? 1,
+              imageResult.gridRows ?? section.gridRows ?? null,
+              imageResult.gridCols ?? section.gridCols ?? null,
+            ]
+          );
+
+          savedSections.push(sectionInsert.rows[0]);
+        }
+      }
+    } else if (Array.isArray(result.sections) && result.sections.length > 0) {
+      for (const section of result.sections) {
+        const sectionInsert = await client.query(
+          `
+          INSERT INTO analysis_sections (
+            analysis_result_id,
+            plant_image_id,
+            section_label,
+            row_index,
+            col_index,
+            health_status,
+            health_score,
+            green_percentage,
+            yellow_percentage,
+            brown_percentage,
+            recommendations,
+            is_excluded,
+            excluded_at,
+            exclude_reason,
+            parent_section_id,
+            level,
+            grid_rows,
+            grid_cols
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9,
+            $10, $11, $12, $13, $14, $15, $16, $17, $18
+          )
+          RETURNING *
+          `,
+          [
+            savedResult.id,
+            imagesRes.rows[0]?.id ?? null,
+            section.sectionLabel,
+            section.rowIndex ?? null,
+            section.colIndex ?? null,
+            section.healthStatus,
+            section.healthScore,
+            section.greenPercentage ?? 0,
+            section.yellowPercentage ?? 0,
+            section.brownPercentage ?? 0,
+            section.recommendations ?? null,
+            section.isExcluded ?? false,
+            section.isExcluded ? new Date().toISOString() : null,
+            section.excludeReason ?? null,
+            section.parentSectionId ?? null,
+            section.level ?? 1,
+            section.gridRows ?? result.gridRows ?? null,
+            section.gridCols ?? result.gridCols ?? null,
+          ]
+        );
+
+        savedSections.push(sectionInsert.rows[0]);
+      }
+    }
 
     const savedSectionsRes = await client.query(
       `
@@ -757,7 +1065,7 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
 
     res.json({
       analysisResult: savedResult,
-      sections: savedSectionsRes.rows,
+      sections: savedSections.length > 0 ? savedSections : savedSectionsRes.rows,
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -769,6 +1077,9 @@ app.post('/api/analysis/reanalyze', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
+await ensureOriginalImageColumn();
+await ensureImageOrderColumn();
+
 app.listen(PORT, () => {
   console.log(`API server running on http://localhost:${PORT}`);
   if (!process.env.DATABASE_URL) {

@@ -1,13 +1,17 @@
 import { useMemo, useRef, useState } from 'react';
-import { ImagePlus, Play, Upload, X } from 'lucide-react';
+import { ImagePlus, Pencil, Play, Upload, X } from 'lucide-react';
+import { ImageEditorModal } from './ImageEditorModal';
+import { extractExifGpsData } from '../lib/exifGps';
 
 export type UploadCategory = 'whole_field' | 'partial_field' | 'close_up';
 export type UploadSourceType = 'upload' | 'wifi' | 'bluetooth' | 'webcam';
 
 export type UploadImageItem = {
-  file: File;
+  id?: string;
+  file: File | null;
   preview: string;
   imageData: string;
+  originalPreview?: string;
   capturedAt?: string;
   sourceType?: UploadSourceType;
   droneModel?: string;
@@ -52,26 +56,18 @@ const CATEGORY_OPTIONS: {
 
 export function CameraCapture({ onAnalyze }: Props) {
   const [category, setCategory] = useState<UploadCategory | ''>('');
-  const [flightHeightM, setFlightHeightM] = useState('');
   const [images, setImages] = useState<UploadImageItem[]>([]);
   const [error, setError] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   const batchInputRef = useRef<HTMLInputElement | null>(null);
   const addInputRef = useRef<HTMLInputElement | null>(null);
 
-  const showHeight = category !== 'close_up';
-
   const gridEstimate = useMemo(() => {
     if (category !== 'whole_field') return 'Not needed';
-    if (!flightHeightM) return 'Pending';
-
-    const h = Number(flightHeightM);
-    if (Number.isNaN(h) || h <= 0) return 'Pending';
-    if (h <= 5) return 'Fine';
-    if (h <= 15) return 'Medium';
-    return 'Wide';
-  }, [category, flightHeightM]);
+    return 'Auto';
+  }, [category]);
 
   const selectedCategoryLabel = useMemo(() => {
     return (
@@ -80,8 +76,14 @@ export function CameraCapture({ onAnalyze }: Props) {
     );
   }, [category]);
 
+  const revokePreview = (preview: string) => {
+    if (preview.startsWith('blob:')) {
+      URL.revokeObjectURL(preview);
+    }
+  };
+
   const revokeItems = (items: UploadImageItem[]) => {
-    items.forEach((item) => URL.revokeObjectURL(item.preview));
+    items.forEach((item) => revokePreview(item.preview));
   };
 
   const readFileAsDataUrl = (file: File) =>
@@ -100,13 +102,24 @@ export function CameraCapture({ onAnalyze }: Props) {
     );
 
     const nextItems: UploadImageItem[] = await Promise.all(
-      imageFiles.map(async (file) => ({
-        file,
-        preview: URL.createObjectURL(file),
-        imageData: await readFileAsDataUrl(file),
-        capturedAt: new Date().toISOString(),
-        sourceType: 'upload',
-      }))
+      imageFiles.map(async (file) => {
+        const [imageData, gpsMeta] = await Promise.all([
+          readFileAsDataUrl(file),
+          extractExifGpsData(file),
+        ]);
+
+        return {
+          file,
+          preview: URL.createObjectURL(file),
+          imageData,
+          originalPreview: imageData,
+          capturedAt: gpsMeta.capturedAt ?? new Date().toISOString(),
+          sourceType: 'upload' as const,
+          latitude: gpsMeta.latitude,
+          longitude: gpsMeta.longitude,
+          altitude: gpsMeta.altitude,
+        };
+      })
     );
 
     setImages((prev) => {
@@ -137,7 +150,7 @@ export function CameraCapture({ onAnalyze }: Props) {
 
       await onAnalyze({
         category,
-        flightHeightM: showHeight && flightHeightM ? Number(flightHeightM) : undefined,
+        flightHeightM: undefined,
         sourceType: 'upload',
         notes: '',
         images,
@@ -152,10 +165,13 @@ export function CameraCapture({ onAnalyze }: Props) {
   const removeImage = (index: number) => {
     setImages((prev) => {
       const target = prev[index];
-      if (target) URL.revokeObjectURL(target.preview);
+      if (target) revokePreview(target.preview);
       return prev.filter((_, i) => i !== index);
     });
   };
+
+  const editingImage =
+    editingIndex !== null && images[editingIndex] ? images[editingIndex] : null;
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -173,7 +189,7 @@ export function CameraCapture({ onAnalyze }: Props) {
         </span>
       </div>
 
-      <div className="grid gap-2.5 sm:grid-cols-2">
+      <div className="grid gap-2.5 sm:grid-cols-1">
         <div>
           <label className="mb-1 block text-sm font-medium text-emerald-900">
             Category
@@ -197,27 +213,6 @@ export function CameraCapture({ onAnalyze }: Props) {
             </p>
           )}
         </div>
-
-        {showHeight && (
-          <div>
-            <label className="mb-1 block text-sm font-medium text-emerald-900">
-              Flight Height (m){' '}
-              <span className="text-emerald-500">optional</span>
-            </label>
-            <input
-              type="number"
-              min="0"
-              step="0.1"
-              value={flightHeightM}
-              onChange={(e) => setFlightHeightM(e.target.value)}
-              placeholder="e.g. 10"
-              className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
-            />
-            <p className="mt-1 text-xs text-emerald-600">
-              Used for aerial grid estimate.
-            </p>
-          </div>
-        )}
       </div>
 
       <div className="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/60 p-3">
@@ -285,9 +280,9 @@ export function CameraCapture({ onAnalyze }: Props) {
         </div>
 
         <div className="rounded-xl border border-emerald-200 bg-slate-50 p-3">
-          <p className="text-xs text-emerald-600">Height</p>
+          <p className="text-xs text-emerald-600">Altitude Source</p>
           <p className="mt-1 font-semibold text-emerald-900">
-            {showHeight ? (flightHeightM ? `${flightHeightM} m` : '-') : 'Not needed'}
+            From image EXIF geotag
           </p>
         </div>
 
@@ -314,28 +309,47 @@ export function CameraCapture({ onAnalyze }: Props) {
 
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
             {images.map((img, index) => (
+              (() => {
+                const displayName = img.file?.name || `Image ${index + 1}`;
+
+                return (
               <div
-                key={`${img.file.name}-${index}`}
+                key={`${displayName}-${index}`}
                 className="overflow-hidden rounded-xl border border-emerald-100 bg-slate-50"
               >
-                <img
-                  src={img.preview}
-                  alt={img.file.name}
-                  className="h-20 w-full object-cover"
-                />
+                <div className="flex h-28 items-center justify-center bg-slate-100 p-2">
+                  <img
+                    src={img.preview}
+                    alt={displayName}
+                    className="max-h-full w-full rounded-lg object-contain"
+                  />
+                </div>
                 <div className="flex items-center justify-between gap-2 p-2">
                   <p className="truncate text-xs text-emerald-800">
-                    {img.file.name}
+                    {displayName}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => removeImage(index)}
-                    className="rounded-md p-1 text-red-600 hover:bg-red-50"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setEditingIndex(index)}
+                      className="rounded-md p-1 text-emerald-700 hover:bg-emerald-50"
+                      title="Edit image"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeImage(index)}
+                      className="rounded-md p-1 text-red-600 hover:bg-red-50"
+                      title="Remove image"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
+                );
+              })()
             ))}
           </div>
         </div>
@@ -356,6 +370,47 @@ export function CameraCapture({ onAnalyze }: Props) {
         <Play className="h-4 w-4" />
         {isAnalyzing ? 'Analyzing...' : 'Analyze Selected Images'}
       </button>
+
+      {editingImage && (
+        <ImageEditorModal
+          open
+          imageSrc={editingImage.imageData || editingImage.preview}
+          originalImageSrc={editingImage.originalPreview || editingImage.imageData || editingImage.preview}
+          fileName={editingImage.file?.name || `edited-image-${editingIndex ?? 0}.png`}
+          title={`Edit ${editingImage.file?.name || 'Image'}`}
+          currentImageIndex={editingIndex ?? 0}
+          totalImages={images.length}
+          onPrevImage={() =>
+            setEditingIndex((current) =>
+              current !== null && current > 0 ? current - 1 : current
+            )
+          }
+          onNextImage={() =>
+            setEditingIndex((current) =>
+              current !== null && current < images.length - 1 ? current + 1 : current
+            )
+          }
+          onClose={() => setEditingIndex(null)}
+          onSave={async ({ imageData, preview, file }) => {
+            setImages((current) =>
+              current.map((image, index) => {
+                if (index !== editingIndex) return image;
+
+                revokePreview(image.preview);
+
+                return {
+                  ...image,
+                  file,
+                  imageData,
+                  preview,
+                  originalPreview: image.originalPreview ?? image.imageData,
+                };
+              })
+            );
+            setEditingIndex(null);
+          }}
+        />
+      )}
     </div>
   );
 }

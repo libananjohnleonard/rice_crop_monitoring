@@ -1,3 +1,5 @@
+import { EXCLUSION_MASK_COLOR } from '../lib/imageEditing';
+
 export interface AnalysisResult {
   healthStatus: string;
   healthScore: number;
@@ -38,6 +40,7 @@ export async function analyzeRicePlantImage(imageData: string): Promise<Analysis
         const a = pixels[i + 3];
 
         if (a < 128) continue;
+        if (isExcludedMaskPixel(r, g, b)) continue;
 
         totalPixels++;
 
@@ -88,6 +91,19 @@ function isYellow(r: number, g: number, b: number): boolean {
 
 function isBrown(r: number, g: number, b: number): boolean {
   return r > 100 && r < 200 && g > 50 && g < 150 && b < 100;
+}
+
+function isExcludedMaskPixel(r: number, g: number, b: number): boolean {
+  const normalized = EXCLUSION_MASK_COLOR.replace('#', '');
+  const maskR = parseInt(normalized.slice(0, 2), 16);
+  const maskG = parseInt(normalized.slice(2, 4), 16);
+  const maskB = parseInt(normalized.slice(4, 6), 16);
+
+  return (
+    Math.abs(r - maskR) <= 8 &&
+    Math.abs(g - maskG) <= 8 &&
+    Math.abs(b - maskB) <= 8
+  );
 }
 
 function calculateHealthScore(green: number, yellow: number, brown: number): number {

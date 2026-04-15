@@ -5,6 +5,7 @@ import type {
   SectionResult,
   WholeFieldImageResult,
 } from '../components/AnalysisResults';
+import { EXCLUSION_MASK_COLOR } from './imageEditing';
 
 type RGB = { r: number; g: number; b: number };
 type HSV = { h: number; s: number; v: number };
@@ -84,10 +85,65 @@ function classifyPixel({ r, g, b }: RGB): 'green' | 'yellow' | 'brown' | 'other'
   return 'other';
 }
 
+function isNullPaddingPixel({ r, g, b }: RGB) {
+  // Rotated image voids are filled with white and should be ignored in analysis.
+  return r >= 245 && g >= 245 && b >= 245;
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace('#', '');
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  };
+}
+
+function isExcludedMaskPixel({ r, g, b }: RGB) {
+  const maskRgb = hexToRgb(EXCLUSION_MASK_COLOR);
+
+  return (
+    Math.abs(r - maskRgb.r) <= 8 &&
+    Math.abs(g - maskRgb.g) <= 8 &&
+    Math.abs(b - maskRgb.b) <= 8
+  );
+}
+
 function getStatusFromScore(score: number): 'Healthy' | 'Moderate' | 'Poor' {
   if (score >= 75) return 'Healthy';
   if (score >= 55) return 'Moderate';
   return 'Poor';
+}
+
+function getHarvestStatus(
+  yellowPercentage: number,
+  greenPercentage: number,
+  healthScore: number
+) : 'Not Ready' | 'Nearly Ready' | 'Ready to Harvest' | 'Needs Attention or Overripe' {
+  if (
+    yellowPercentage >= 55 ||
+    (yellowPercentage >= 35 && healthScore < 45)
+  ) {
+    return 'Needs Attention or Overripe';
+  }
+
+  if (
+    yellowPercentage >= 30 &&
+    yellowPercentage >= greenPercentage * 0.8 &&
+    healthScore >= 45
+  ) {
+    return 'Ready to Harvest';
+  }
+
+  if (
+    yellowPercentage >= 15 &&
+    yellowPercentage >= greenPercentage * 0.3 &&
+    healthScore >= 40
+  ) {
+    return 'Nearly Ready';
+  }
+
+  return 'Not Ready';
 }
 
 function getRecommendation(status: 'Healthy' | 'Moderate' | 'Poor') {
@@ -217,6 +273,8 @@ function analyzeCanvasSection(
     const a = data[i + 3];
 
     if (a === 0) continue;
+    if (isNullPaddingPixel({ r, g, b })) continue;
+    if (isExcludedMaskPixel({ r, g, b })) continue;
 
     const result = classifyPixel({ r, g, b });
 
@@ -249,6 +307,8 @@ function analyzeCanvasSection(
   const healthStatus = getStatusFromScore(healthScore);
 
   return {
+    consideredPixels: considered,
+    isEmpty: considered === 0,
     healthScore,
     healthStatus,
     greenPercentage,
@@ -259,13 +319,13 @@ function analyzeCanvasSection(
 
 async function analyzeSingleImage(
   category: AnalysisInput['category'],
-  preview: string
+  imageSource: string
 ): Promise<AnalysisResultDetails> {
-  if (!preview) {
+  if (!imageSource) {
     throw new Error('No image available for analysis.');
   }
 
-  const img = await loadImage(preview);
+  const img = await loadImage(imageSource);
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -317,39 +377,58 @@ async function analyzeSingleImage(
         yellowPercentage: sectionResult.yellowPercentage,
         brownPercentage: sectionResult.brownPercentage,
         recommendations: getRecommendation(sectionResult.healthStatus),
+        isExcluded: sectionResult.isEmpty,
+        excludeReason: sectionResult.isEmpty
+          ? 'Automatically excluded because this grid section has no analyzable pixels.'
+          : null,
       });
     }
   }
 
-  const totalSections = sections.length;
-  const healthySections = sections.filter(
+  const includedSections = sections.filter((section) => !section.isExcluded);
+  const summarySections =
+    includedSections.length > 0 ? includedSections : sections;
+
+  const totalSections = includedSections.length;
+  const healthySections = includedSections.filter(
     (section) => section.healthStatus === 'Healthy'
   ).length;
-  const warningSections = sections.filter(
+  const warningSections = includedSections.filter(
     (section) => section.healthStatus === 'Moderate'
   ).length;
-  const poorSections = sections.filter(
+  const poorSections = includedSections.filter(
     (section) => section.healthStatus === 'Poor'
   ).length;
 
   const avgHealth =
-    sections.reduce((sum, item) => sum + item.healthScore, 0) / totalSections;
+    summarySections.reduce((sum, item) => sum + item.healthScore, 0) /
+    summarySections.length;
 
   const avgGreen =
-    sections.reduce((sum, item) => sum + item.greenPercentage, 0) / totalSections;
+    summarySections.reduce((sum, item) => sum + item.greenPercentage, 0) /
+    summarySections.length;
 
   const avgYellow =
-    sections.reduce((sum, item) => sum + item.yellowPercentage, 0) / totalSections;
+    summarySections.reduce((sum, item) => sum + item.yellowPercentage, 0) /
+    summarySections.length;
 
   const avgBrown =
-    sections.reduce((sum, item) => sum + item.brownPercentage, 0) / totalSections;
+    summarySections.reduce((sum, item) => sum + item.brownPercentage, 0) /
+    summarySections.length;
 
   const overallStatus = getStatusFromScore(Math.round(avgHealth));
+  const harvestStatus = getHarvestStatus(
+    round1(avgYellow),
+    round1(avgGreen),
+    Math.round(avgHealth)
+  );
   const gridEstimate = `${rows}x${cols}`;
 
   if (category === 'whole_field') {
     return {
       status: overallStatus,
+      harvestReady: harvestStatus === 'Ready to Harvest',
+      harvestStatus,
       healthScore: Math.round(avgHealth),
       green: round1(avgGreen),
       yellow: round1(avgYellow),
@@ -358,7 +437,7 @@ async function analyzeSingleImage(
       healthySections,
       warningSections,
       poorSections,
-      selectedSectionId: sections[0]?.sectionLabel,
+      selectedSectionId: includedSections[0]?.sectionLabel ?? sections[0]?.sectionLabel,
       gridEstimate,
       interpretation: buildInterpretation(category),
       gridRows: rows,
@@ -370,6 +449,8 @@ async function analyzeSingleImage(
   if (category === 'partial_field') {
     return {
       status: overallStatus,
+      harvestReady: harvestStatus === 'Ready to Harvest',
+      harvestStatus,
       healthScore: Math.round(avgHealth),
       green: round1(avgGreen),
       yellow: round1(avgYellow),
@@ -378,7 +459,7 @@ async function analyzeSingleImage(
       healthySections,
       warningSections,
       poorSections,
-      selectedSectionId: sections[0]?.sectionLabel,
+      selectedSectionId: includedSections[0]?.sectionLabel ?? sections[0]?.sectionLabel,
       gridEstimate,
       interpretation: buildInterpretation(category),
       gridRows: rows,
@@ -387,10 +468,12 @@ async function analyzeSingleImage(
     };
   }
 
-  const singleSection = sections[0];
+  const singleSection = includedSections[0] ?? sections[0];
 
   return {
     status: overallStatus,
+    harvestReady: harvestStatus === 'Ready to Harvest',
+    harvestStatus,
     healthScore: Math.round(avgHealth),
     green: round1(avgGreen),
     yellow: round1(avgYellow),
@@ -434,9 +517,20 @@ export function summarizeWholeFieldImageResults(
     (sum, item) => sum + (item.poorSections ?? 0),
     0
   );
+  const harvestStatus = imageResults.some(
+    (item) => item.harvestStatus === 'Needs Attention or Overripe'
+  )
+    ? 'Needs Attention or Overripe'
+    : imageResults.some((item) => item.harvestStatus === 'Ready to Harvest')
+      ? 'Ready to Harvest'
+      : imageResults.some((item) => item.harvestStatus === 'Nearly Ready')
+        ? 'Nearly Ready'
+        : 'Not Ready';
 
   return {
     status: getStatusFromScore(Math.round(avgHealth)),
+    harvestReady: harvestStatus === 'Ready to Harvest',
+    harvestStatus,
     healthScore: Math.round(avgHealth),
     green: round1(avgGreen),
     yellow: round1(avgYellow),
@@ -465,7 +559,7 @@ export async function analyzeBatchInBrowser(
       input.images.map(async (image, imageIndex) => {
         const singleResult = await analyzeSingleImage(
           input.category,
-          image.preview
+          image.imageData || image.preview
         );
 
         return {
@@ -479,7 +573,10 @@ export async function analyzeBatchInBrowser(
     return summarizeWholeFieldImageResults(imageResults);
   }
 
-  return analyzeSingleImage(input.category, input.images[0]?.preview ?? '');
+  return analyzeSingleImage(
+    input.category,
+    input.images[0]?.imageData || input.images[0]?.preview || ''
+  );
 }
 
 export function summarizeSectionsForReanalysis(
@@ -514,12 +611,22 @@ export function summarizeSectionsForReanalysis(
     sections.reduce((sum, item) => sum + item.yellowPercentage, 0) / totalSections;
   const avgBrown =
     sections.reduce((sum, item) => sum + item.brownPercentage, 0) / totalSections;
+  const roundedHealthScore = Math.round(avgHealth);
+  const roundedGreen = round1(avgGreen);
+  const roundedYellow = round1(avgYellow);
+  const harvestStatus = getHarvestStatus(
+    roundedYellow,
+    roundedGreen,
+    roundedHealthScore
+  );
 
   return {
-    status: getStatusFromScore(Math.round(avgHealth)),
-    healthScore: Math.round(avgHealth),
-    green: round1(avgGreen),
-    yellow: round1(avgYellow),
+    status: getStatusFromScore(roundedHealthScore),
+    harvestReady: harvestStatus === 'Ready to Harvest',
+    harvestStatus,
+    healthScore: roundedHealthScore,
+    green: roundedGreen,
+    yellow: roundedYellow,
     brown: round1(avgBrown),
     totalSections,
     healthySections,

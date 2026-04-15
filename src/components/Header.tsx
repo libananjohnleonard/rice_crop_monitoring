@@ -52,6 +52,16 @@ export function Header({ onOpenInfo }: Props) {
         </nav>
 
         <div className="flex items-center gap-3">
+          <Link
+            to="/manage-uploads"
+            className={`hidden rounded-md px-3 py-1 text-sm sm:inline-flex ${
+              location.pathname === '/manage-uploads'
+                ? 'bg-emerald-100 text-emerald-900'
+                : 'text-emerald-700 hover:bg-emerald-100'
+            }`}
+          >
+            Manage Uploads
+          </Link>
           <button
             onClick={() => onOpenInfo?.()}
             className="hidden rounded-md px-3 py-1 text-sm text-emerald-700 hover:bg-emerald-100 sm:inline-flex"

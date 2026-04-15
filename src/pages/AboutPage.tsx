@@ -12,7 +12,7 @@ export function AboutPage({ onOpenHowItWorks }: Props) {
         <h1 className="mb-4 text-2xl font-bold text-emerald-800">About Rice Plant Health Monitor</h1>
         <p className="mb-6 text-emerald-700">
           This web system helps you monitor rice crop health in the field using your device&apos;s camera. Capture
-          images of rice plants to get instant RGB-based health analysis, harvest readiness hints, and actionable
+          images of rice plants to get instant RGB-based health analysis, harvest-status guidance, and actionable
           recommendations.
         </p>
 
@@ -28,7 +28,15 @@ export function AboutPage({ onOpenHowItWorks }: Props) {
           </li>
           <li className="flex items-start gap-2">
             <span className="inline-block h-5 w-5 shrink-0" />
-            <span>Health score (0–100) and status: Healthy, Moderate, or Poor</span>
+            <span>Overall Health Status and Health Points (0-100): Healthy, Moderate, or Poor</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="inline-block h-5 w-5 shrink-0" />
+            <span>Section Health Status for whole-field and partial-field images</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="inline-block h-5 w-5 shrink-0" />
+            <span>Harvest Status: Not Ready, Nearly Ready, Ready to Harvest, or Needs Attention or Overripe</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="inline-block h-5 w-5 shrink-0" />
@@ -44,8 +52,8 @@ export function AboutPage({ onOpenHowItWorks }: Props) {
         <p className="mb-6 text-emerald-700">
           Each captured image is analyzed by measuring the proportion of green, yellow, and brown pixels. Higher
           green suggests healthy growth; more yellow can mean ripening or stress; brown may indicate disease or
-          nutrient issues. The system combines these into a single health score and suggests whether plants may be
-          ready for harvest.
+          nutrient issues. The system combines these into an Overall Health Status, Health Points, and Harvest
+          Status. For whole-field and partial-field images, it also shows Section Health Status for each grid area.
         </p>
 
         <div className="flex flex-wrap gap-3">

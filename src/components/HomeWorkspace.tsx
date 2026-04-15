@@ -12,6 +12,10 @@ type HomeWorkspaceProps = {
     excludedSections: string[];
     imageIndex?: number;
   }) => void | Promise<void>;
+  onUpdateImage?: (payload: {
+    imageIndex: number;
+    image: AnalysisHistoryItem['images'][number];
+  }) => void | Promise<void>;
   onSelectHistoryItem?: (item: AnalysisHistoryItem) => void;
 };
 
@@ -22,6 +26,7 @@ export function HomeWorkspace({
   onAnalyze,
   onClear,
   onReanalyze,
+  onUpdateImage,
   onSelectHistoryItem,
 }: HomeWorkspaceProps) {
   const [historyView, setHistoryView] = useState<'card' | 'list'>('list');
@@ -37,8 +42,11 @@ export function HomeWorkspace({
           key={`workspace-${refreshKey}`}
           showLatestOnly
           data={currentAnalysis}
+          history={history}
           onClear={onClear}
           onReanalyze={onReanalyze}
+          onUpdateImage={onUpdateImage}
+          onSelectHistoryItem={onSelectHistoryItem}
         />
       </section>
 
@@ -73,15 +81,13 @@ export function HomeWorkspace({
           </div>
         </div>
 
-        <div className="max-h-[720px] overflow-y-auto pr-1">
-          <AnalysisResults
-            key={`history-${refreshKey}`}
-            history={history}
-            historyView={historyView}
-            onSelectHistoryItem={onSelectHistoryItem}
-            selectedHistoryId={currentAnalysis?.id ?? null}
-          />
-        </div>
+        <AnalysisResults
+          key={`history-${refreshKey}`}
+          history={history}
+          historyView={historyView}
+          onSelectHistoryItem={onSelectHistoryItem}
+          selectedHistoryId={currentAnalysis?.id ?? null}
+        />
       </section>
     </div>
   );

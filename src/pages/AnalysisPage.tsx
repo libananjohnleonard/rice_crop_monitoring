@@ -7,7 +7,7 @@ export function AnalysisPage() {
       <div className="rounded-2xl border border-emerald-200 bg-white/80 p-6 shadow-sm">
         <h1 className="mb-4 text-2xl font-bold text-emerald-800">Analysis</h1>
         <p className="mb-6 text-emerald-700">
-          This section explains how analysis results, summary, and history work in the Rice Plant Health Monitor.
+          This section explains how overall health, section health, harvest status, and history work in the Rice Plant Health Monitor.
         </p>
 
         <div className="space-y-6">
@@ -18,11 +18,12 @@ export function AnalysisPage() {
             <div>
               <h2 className="mb-1 font-semibold text-emerald-800">General Analysis Summary</h2>
               <p className="text-sm text-emerald-700">
-                On the home page, the General Analysis panel shows aggregated health across your captures. You can
+                On the home page, the analysis workspace shows the result for your selected image or field. You can
                 switch between: <strong>All Captures</strong>, <strong>Current Session</strong> (only images from
-                the last camera run), <strong>Last 20 mins</strong>, or <strong>Current Image</strong>. Summary
-                includes average health score, green/yellow/brown percentages, and how many sections are ready for
-                harvest.
+                the last camera run), <strong>Last 20 mins</strong>, or <strong>Current Image</strong>. The result
+                includes <strong>Overall Health Status</strong>, <strong>Health Points</strong>, color percentages,
+                and <strong>Harvest Status</strong> such as Not Ready, Nearly Ready, Ready to Harvest, or Needs
+                Attention or Overripe.
               </p>
             </div>
           </div>
@@ -34,9 +35,21 @@ export function AnalysisPage() {
             <div>
               <h2 className="mb-1 font-semibold text-emerald-800">Analysis History</h2>
               <p className="text-sm text-emerald-700">
-                The Analysis History list on the home page shows every captured image with its health status, score,
-                color breakdown (green, yellow, brown %), harvest readiness, and recommendations. Use card or list
-                view and click an entry to see full details.
+                The Analysis History list on the home page shows every captured image with its overall health status,
+                health points, color breakdown (green, yellow, brown %), harvest status, and recommendations. Use
+                card or list view and click an entry to see full details.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-4 rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-200">
+              <BarChart3 className="h-5 w-5 text-emerald-700" />
+            </div>
+            <div>
+              <h2 className="mb-1 font-semibold text-emerald-800">Overall And By Section</h2>
+              <p className="text-sm text-emerald-700">
+                Whole-field and partial-field uploads are divided into sections. The system shows an <strong>Overall Health Status</strong> for the full image and a <strong>Section Health Status</strong> for each grid area so you can identify which parts are healthy, moderate, or poor.
               </p>
             </div>
           </div>
