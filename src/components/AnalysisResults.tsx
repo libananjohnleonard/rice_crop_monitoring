@@ -458,7 +458,7 @@ function GridOverlayPreview({
                     src={originalImageSrc}
                     alt=""
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-0 h-full w-full scale-[1.01] object-contain opacity-85 blur-[1.5px]"
+                    className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-90"
                   />
                   <div className="pointer-events-none absolute inset-0 bg-black/16" />
                 </>
@@ -553,7 +553,7 @@ function GridOverlayPreview({
           <img
             src={displayImageSrc}
             alt="Grid overlay preview"
-            className="h-full w-full object-fill"
+            className="h-full w-full object-contain"
           />
 
           <div
@@ -1321,7 +1321,7 @@ function Workspace({
                         src={activeImage.originalPreview}
                         alt=""
                         aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 h-full max-h-72 w-full scale-[1.01] object-contain opacity-85 blur-[1.5px]"
+                        className="pointer-events-none absolute inset-0 h-full max-h-72 w-full object-contain opacity-90"
                       />
                       <div className="pointer-events-none absolute inset-0 bg-black/16" />
                     </>

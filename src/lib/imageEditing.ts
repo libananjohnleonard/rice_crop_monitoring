@@ -367,7 +367,7 @@ export async function softenFieldBoundaryPreview(src: string): Promise<string> {
     const g = data[index + 1];
     const b = data[index + 2];
 
-    const isNearWhite = r >= 245 && g >= 245 && b >= 245;
+    const isNearWhite = r >= 252 && g >= 252 && b >= 252;
     const isMaskPixel =
       Math.abs(r - maskColor.r) <= 8 &&
       Math.abs(g - maskColor.g) <= 8 &&
