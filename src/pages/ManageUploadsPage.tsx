@@ -115,7 +115,7 @@ export function ManageUploadsPage() {
           .from('analysis_batches')
           .select('*')
           .eq('id', row.batch_id)
-          .single();
+          .maybeSingle();
         if (batchError) throw batchError;
         if (!batch?.id) continue;
 

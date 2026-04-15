@@ -182,7 +182,7 @@ export function HomePage() {
           .from('analysis_batches')
           .select('*')
           .eq('id', row.batch_id)
-          .single();
+          .maybeSingle();
         if (batchError) throw batchError;
         if (!batch?.id) continue;
 
@@ -625,8 +625,11 @@ export function HomePage() {
       .eq('batch_id', currentAnalysis.id)
       .order('analyzed_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
     if (latestResultError) throw latestResultError;
+    if (!latestResult) {
+      throw new Error('No saved analysis result found for this batch.');
+    }
 
     const { data: savedResult, error: updateError } = await supabase
       .from('analysis_results')

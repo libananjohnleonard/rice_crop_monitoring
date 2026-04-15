@@ -306,7 +306,7 @@ export async function softenExclusionMaskPreview(src: string): Promise<string> {
   canvas.width = image.naturalWidth;
   canvas.height = image.naturalHeight;
 
-  const context = canvas.getContext('2d');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
 
   if (!context) {
     throw new Error('Could not create preview canvas.');
@@ -350,7 +350,7 @@ export async function softenFieldBoundaryPreview(src: string): Promise<string> {
   canvas.width = image.naturalWidth;
   canvas.height = image.naturalHeight;
 
-  const context = canvas.getContext('2d');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
 
   if (!context) {
     throw new Error('Could not create softened field preview canvas.');
